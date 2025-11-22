@@ -104,62 +104,6 @@ The script performs these operations:
 
 After upload, files appear immediately in the web UI and sync to connected Supernote devices.
 
-## Supported File Types
-
-Based on Supernote Private Cloud configuration:
-
-**Documents:** PDF, EPUB, XPS, FB2, CBZ, DOCX, DOC, PPTX, PPT, XLSX, XLS, TXT, RTF, CHM
-
-**Images:** JPG, JPEG, PNG, GIF, BMP, WEBP, TIF, PSD, TGA
-
-**Fonts:** TTF, OTF, TTC, EOT, WOFF, DFONT
-
-**Archives:** ZIP, RAR, GZ, TAR.GZ
-
-**Supernote formats:** .note, .mark, .snbak, .snstk
-
-## Limitations
-
-- **Linux only** - Requires bash and standard Linux utilities (md5sum, stat, etc.)
-- **Same machine** - Must run on the same server where Supernote Private Cloud is installed
-- **Docker required** - Uses `docker exec` to access the MariaDB container
-- **Single file uploads** - No built-in batch mode (but easy to script, see examples)
-- **No progress bars** - Uploads complete files without progress indication
-
-## Troubleshooting
-
-### "User not found" error
-
-Check your email address matches the one in the database:
-
-```bash
-source .dbenv
-docker exec mariadb mysql -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" -h 127.0.0.1 \
-  -D "$MYSQL_DATABASE" -se "SELECT user_id, email FROM u_user"
-```
-
-### "Storage directory does not exist"
-
-Ensure the user has logged into the web UI at least once to create the base directory structure:
-
-```bash
-ls -la supernote_data/your-email@example.com/Supernote/
-```
-
-### File doesn't appear in UI
-
-- Wait a few seconds and refresh the browser
-- Check that Docker containers are running: `docker ps`
-- Verify the file was actually copied: `ls supernote_data/your-email@example.com/Supernote/Document/`
-
-## Safety & Security
-
-- ✅ **No network calls** - Script operates entirely locally
-- ✅ **No auto-updates** - System never contacts external servers
-- ✅ **Credentials secure** - Reads from existing `.dbenv` file (not stored in script)
-- ✅ **Minimal operations** - Only performs necessary database inserts
-- ✅ **Follows system patterns** - Uses same structure as official Supernote web UI
-
 ## Technical Details
 
 The Supernote Private Cloud uses a nested directory structure:
@@ -180,7 +124,7 @@ MIT License - Use freely, modify as needed, no warranty provided.
 
 ## Acknowledgments
 
-Built for the Supernote community. Thanks to Ratta for creating the Supernote Private Cloud solution.
+Built for the Supernote community. Thanks to Supernote for creating the Supernote Private Cloud solution.
 
 ---
 
