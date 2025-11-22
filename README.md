@@ -61,26 +61,7 @@ chmod +x supernote-upload.sh
 ./supernote-upload.sh user@example.com ~/mynote.note Note
 ```
 
-**Upload to a custom subfolder (creates if needed):**
-```bash
-./supernote-upload.sh user@example.com ~/report.pdf Document/Work/Reports
-```
-
-### Available Folders
-
-- `Document/` - PDF and ebook files
-- `Document/Books` - Books subfolder
-- `Document/PDF` - PDFs subfolder
-- `Note/` - Handwritten .note files
-- `INBOX/` - Inbox folder
-- `EXPORT/` - Exported files
-- `SCREENSHOT/` - Screenshots
-
-You can create any subfolder structure under these root folders.
-
-## Batch Upload Example
-
-Upload all PDFs from a directory:
+**Upload all PDFs from a directory:**
 
 ```bash
 #!/bin/bash
