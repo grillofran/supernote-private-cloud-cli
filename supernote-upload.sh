@@ -6,20 +6,59 @@
 # It properly registers files in the database so they appear in the UI and sync to devices.
 #
 # Usage:
-#     ./supernote-upload.sh <email> <source_file> <destination_folder>
+#     ./supernote-upload.sh [OPTIONS] <email> <source_file> <destination_folder>
+#
+# Options:
+#     -f, --force          Overwrite existing files without prompting
+#     -n, --no-color       Disable colored output (for programmatic use)
+#     -h, --help           Show this help message
 #
 # Example:
 #     ./supernote-upload.sh user@example.com ~/mybook.pdf Document/Books
-#     ./supernote-upload.sh user@example.com ~/mynote.note Note/MyNotes
+#     ./supernote-upload.sh --force --no-color user@example.com ~/mynote.note Note/MyNotes
 #
 
-set -e
+# Parse options
+FORCE_OVERWRITE=false
+USE_COLOR=true
 
-# Color output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -f|--force)
+            FORCE_OVERWRITE=true
+            shift
+            ;;
+        -n|--no-color)
+            USE_COLOR=false
+            shift
+            ;;
+        -h|--help)
+            head -20 "$0" | grep '^#' | grep -v '#!/bin/bash' | sed 's/^# *//'
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# Color output (disabled if --no-color)
+if [ "$USE_COLOR" = true ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    NC=''
+fi
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,7 +76,11 @@ STORAGE_BASE="$SCRIPT_DIR/supernote_data"
 
 # Function to execute MySQL query
 mysql_exec() {
-    docker exec mariadb mysql -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" -h 127.0.0.1 -D "$MYSQL_DATABASE" -se "$1" 2>&1 | grep -v "Warning"
+    local result
+    result=$(docker exec mariadb mysql -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" -h 127.0.0.1 -D "$MYSQL_DATABASE" -se "$1" 2>&1)
+    local exit_code=$?
+    echo "$result" | grep -v "Warning" || true
+    return $exit_code
 }
 
 # Function to generate a unique ID (simplified snowflake-like)
@@ -100,7 +143,7 @@ ensure_directory() {
                     search_name="DOCUMENT"
                     local root_id=$(mysql_exec "SELECT id FROM f_user_file WHERE user_id = $user_id AND directory_id = 0 AND file_name = 'DOCUMENT' AND is_folder = 'Y' AND is_active = 'Y'")
                     if [ -z "$root_id" ]; then
-                        echo -e "${RED}Error: DOCUMENT root folder not found in database${NC}"
+                        echo -e "${RED}Error: DOCUMENT root folder not found in database${NC}" >&2
                         exit 1
                     fi
                     # Now create the Document subfolder under DOCUMENT
@@ -113,7 +156,7 @@ ensure_directory() {
                     search_name="NOTE"
                     local root_id=$(mysql_exec "SELECT id FROM f_user_file WHERE user_id = $user_id AND directory_id = 0 AND file_name = 'NOTE' AND is_folder = 'Y' AND is_active = 'Y'")
                     if [ -z "$root_id" ]; then
-                        echo -e "${RED}Error: NOTE root folder not found in database${NC}"
+                        echo -e "${RED}Error: NOTE root folder not found in database${NC}" >&2
                         exit 1
                     fi
                     # Now create the Note subfolder under NOTE
@@ -145,7 +188,7 @@ ensure_directory() {
             fi
             local phys_dir="$storage_path/$current_path"
             mkdir -p "$phys_dir"
-            echo -e "${GREEN}  Created directory: $search_name${NC}"
+            echo -e "${GREEN}  Created directory: $search_name${NC}" >&2
         else
             if [ -z "$current_path" ]; then
                 current_path="$actual_name"
@@ -175,17 +218,17 @@ upload_file() {
 
     # Get user information
     local user_id=$(get_user_id "$email")
-    echo -e "${GREEN}Found user: $email (ID: $user_id)${NC}"
+    echo -e "${GREEN}Found user: $email (ID: $user_id)${NC}" >&2
 
     # Determine storage path
     local user_storage="$STORAGE_BASE/$email/Supernote"
     if [ ! -d "$user_storage" ]; then
-        echo -e "${RED}Error: User storage directory does not exist: $user_storage${NC}"
+        echo -e "${RED}Error: User storage directory does not exist: $user_storage${NC}" >&2
         exit 1
     fi
 
     # Ensure destination directory exists
-    echo "Ensuring destination path exists: $dest_folder"
+    echo "Ensuring destination path exists: $dest_folder" >&2
     local directory_id=$(ensure_directory "$user_id" "$dest_folder" "$user_storage")
 
     # Calculate file properties
@@ -197,12 +240,16 @@ upload_file() {
     local existing=$(mysql_exec "SELECT id FROM f_user_file WHERE user_id = $user_id AND directory_id = $directory_id AND file_name = '$file_name' AND is_active = 'Y'")
 
     if [ -n "$existing" ]; then
-        echo -e "${YELLOW}Warning: File '$file_name' already exists in '$dest_folder'${NC}"
-        read -p "Overwrite? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "Upload cancelled"
-            exit 0
+        if [ "$FORCE_OVERWRITE" = false ]; then
+            echo -e "${YELLOW}Warning: File '$file_name' already exists in '$dest_folder'${NC}" >&2
+            read -p "Overwrite? (y/N): " -r REPLY
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Upload cancelled"
+                exit 0
+            fi
+        else
+            echo -e "${YELLOW}Overwriting existing file: $file_name${NC}" >&2
         fi
 
         # Mark old file as inactive
@@ -212,32 +259,48 @@ upload_file() {
 
     # Copy file to destination
     local dest_path="$user_storage/$dest_folder/$file_name"
-    mkdir -p "$(dirname "$dest_path")"
-    cp "$source_file" "$dest_path"
-    echo -e "${GREEN}Copied file to: $dest_path${NC}"
+    mkdir -p "$(dirname "$dest_path")" || {
+        echo -e "${RED}Error: Failed to create directory$(dirname "$dest_path")${NC}" >&2
+        exit 1
+    }
+    cp "$source_file" "$dest_path" || {
+        echo -e "${RED}Error: Failed to copy file to $dest_path${NC}" >&2
+        exit 1
+    }
+    echo -e "${GREEN}Copied file to: $dest_path${NC}" >&2
 
     # Register file in database
     local file_id=$(generate_id)
     local now=$(date '+%Y-%m-%d %H:%M:%S')
     local terminal_edit_time=$(($(stat -c%Y "$source_file") * 1000))
 
-    mysql_exec "INSERT INTO f_user_file (id, user_id, directory_id, file_name, inner_name, size, md5, is_folder, is_active, create_time, update_time, terminal_file_edit_time) VALUES ($file_id, $user_id, $directory_id, '$file_name', NULL, $file_size, '$file_md5', 'N', 'Y', '$now', '$now', $terminal_edit_time)"
+    if ! mysql_exec "INSERT INTO f_user_file (id, user_id, directory_id, file_name, inner_name, size, md5, is_folder, is_active, create_time, update_time, terminal_file_edit_time) VALUES ($file_id, $user_id, $directory_id, '$file_name', NULL, $file_size, '$file_md5', 'N', 'Y', '$now', '$now', $terminal_edit_time)"; then
+        echo -e "${RED}Error: Failed to register file in database${NC}" >&2
+        exit 1
+    fi
 
     # Update user capacity
-    mysql_exec "INSERT INTO f_capacity (user_id, used_capacity, total_capacity, create_time, update_time) VALUES ($user_id, $file_size, 107374182400, '$now', '$now') ON DUPLICATE KEY UPDATE used_capacity = used_capacity + $file_size, update_time = '$now'"
+    if ! mysql_exec "INSERT INTO f_capacity (user_id, used_capacity, total_capacity, create_time, update_time) VALUES ($user_id, $file_size, 107374182400, '$now', '$now') ON DUPLICATE KEY UPDATE used_capacity = used_capacity + $file_size, update_time = '$now'"; then
+        echo -e "${YELLOW}Warning: Failed to update capacity${NC}" >&2
+    fi
 
     # Log the action
     local action_id=$(generate_id)
-    mysql_exec "INSERT INTO f_file_action (id, user_id, file_id, file_name, path, md5, is_folder, size, action, create_time, update_time) VALUES ($action_id, $user_id, $file_id, '$file_name', '$dest_folder', '$file_md5', 'N', $file_size, 'A', '$now', '$now')"
+    if ! mysql_exec "INSERT INTO f_file_action (id, user_id, file_id, file_name, path, md5, is_folder, size, action, create_time, update_time) VALUES ($action_id, $user_id, $file_id, '$file_name', '$dest_folder', '$file_md5', 'N', $file_size, 'A', '$now', '$now')"; then
+        echo -e "${YELLOW}Warning: Failed to log file action${NC}" >&2
+    fi
 
-    echo ""
-    echo -e "${GREEN}✓ Successfully uploaded '$file_name'${NC}"
-    echo "  Size: $file_size bytes"
-    echo "  MD5: $file_md5"
-    echo "  Location: $dest_folder/$file_name"
-    echo "  Database ID: $file_id"
-    echo ""
-    echo "The file should now be visible in the web UI and will sync to your devices."
+    echo "" >&2
+    echo -e "${GREEN}✓ Successfully uploaded '$file_name'${NC}" >&2
+    echo "  Size: $file_size bytes" >&2
+    echo "  MD5: $file_md5" >&2
+    echo "  Location: $dest_folder/$file_name" >&2
+    echo "  Database ID: $file_id" >&2
+    echo "" >&2
+    echo "The file should now be visible in the web UI and will sync to your devices." >&2
+
+    # Exit successfully
+    exit 0
 }
 
 # Main
